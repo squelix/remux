@@ -144,6 +144,16 @@ impl StreamDescriptor {
             }
         }
     }
+
+    /// Reconstruct the magnet URI for `Torrent` descriptors; `None` otherwise.
+    pub fn torrent_magnet(&self) -> Option<String> {
+        match self {
+            Self::Torrent { info_hash, file_hint, file_idx, trackers } => Some(
+                build_magnet(info_hash, file_hint.as_deref(), *file_idx, trackers),
+            ),
+            _ => None,
+        }
+    }
 }
 
 /// Combined stream descriptor and provider metadata stored in `db::Media.stream_info`.
@@ -246,6 +256,32 @@ const DEFAULT_TRACKERS: &[&str] = &[
     "udp://tracker.srv00.com:6969/announce",
 ];
 
+/// Build a magnet URI from torrent components.
+fn build_magnet(
+    info_hash: &str,
+    file_hint: Option<&str>,
+    file_idx: Option<usize>,
+    trackers: &[String],
+) -> String {
+    let mut m = format!("magnet:?xt=urn:btih:{}", info_hash);
+    if trackers.is_empty() {
+        for t in DEFAULT_TRACKERS {
+            m.push_str(&format!("&tr={}", urlencoding::encode(t)));
+        }
+    } else {
+        for t in trackers {
+            m.push_str(&format!("&tr={}", urlencoding::encode(t)));
+        }
+    }
+    if let Some(idx) = file_idx {
+        m.push_str(&format!("&file_idx={}", idx));
+    }
+    if let Some(hint) = file_hint {
+        m.push_str(&format!("&file={}", urlencoding::encode(hint)));
+    }
+    m
+}
+
 pub struct TorrentSource {
     pub info_hash: String,
     pub file_hint: Option<String>,
@@ -255,24 +291,7 @@ pub struct TorrentSource {
 
 impl TorrentSource {
     fn to_magnet(&self) -> String {
-        let mut m = format!("magnet:?xt=urn:btih:{}", self.info_hash);
-        let trackers: &[String] = &self.trackers;
-        if trackers.is_empty() {
-            for t in DEFAULT_TRACKERS {
-                m.push_str(&format!("&tr={}", urlencoding::encode(t)));
-            }
-        } else {
-            for t in trackers {
-                m.push_str(&format!("&tr={}", urlencoding::encode(t)));
-            }
-        }
-        if let Some(idx) = self.file_idx {
-            m.push_str(&format!("&file_idx={}", idx));
-        }
-        if let Some(hint) = &self.file_hint {
-            m.push_str(&format!("&file={}", urlencoding::encode(hint)));
-        }
-        m
+        build_magnet(&self.info_hash, self.file_hint.as_deref(), self.file_idx, &self.trackers)
     }
 }
 
@@ -470,4 +489,24 @@ fn extract_query_param(url: &str, param: &str) -> Option<String> {
         .query_pairs()
         .find(|(k, _)| k == param)
         .map(|(_, v)| v.into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn torrent_magnet_builds_from_descriptor() {
+        let d = StreamDescriptor::Torrent {
+            info_hash: "abc123".into(),
+            file_hint: Some("S01E02.mkv".into()),
+            file_idx: Some(3),
+            trackers: vec!["udp://t.example:6969/announce".into()],
+        };
+        let m = d.torrent_magnet().unwrap();
+        assert!(m.starts_with("magnet:?xt=urn:btih:abc123"));
+        assert!(m.contains("file_idx=3"));
+        assert!(m.contains("tr=udp"));
+        assert!(StreamDescriptor::Local("/x".into()).torrent_magnet().is_none());
+    }
 }
