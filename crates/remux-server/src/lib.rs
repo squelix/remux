@@ -437,6 +437,16 @@ pub struct Config {
     /// Base URL for remuxdb. When set, probe results are submitted after each live probe.
     #[serde(default = "default_remuxdb_url")]
     pub remuxdb_url: Option<String>,
+    /// Pre-download the head of the next episode when a user crosses
+    /// `precache_threshold_percent`. Torrent sources only (v1). Opt-in.
+    #[serde(default)]
+    pub precache_next_episode: bool,
+    /// Watch percentage at which next-episode precache triggers.
+    #[serde(default = "default_precache_threshold_percent")]
+    pub precache_threshold_percent: u8,
+    /// Maximum bytes to pre-download from the next episode's head.
+    #[serde(default = "default_precache_bytes")]
+    pub precache_bytes: u64,
 }
 
 fn default_remuxdb_url() -> Option<String> {
@@ -465,6 +475,14 @@ fn default_torrent_http_port_opt() -> Option<u16> {
 
 fn default_torrent_peer_port() -> Option<u16> {
     Some(6881)
+}
+
+fn default_precache_threshold_percent() -> u8 {
+    75
+}
+
+fn default_precache_bytes() -> u64 {
+    100 * 1024 * 1024
 }
 
 impl Config {
@@ -511,6 +529,9 @@ impl Default for Config {
             tmdb_base_url: default_tmdb_base_url(),
             trakt_base_url: default_trakt_base_url(),
             remuxdb_url: Some("https://remuxdb.1632022.xyz".to_string()),
+            precache_next_episode: false,
+            precache_threshold_percent: default_precache_threshold_percent(),
+            precache_bytes: default_precache_bytes(),
         }
         .resolve()
     }
