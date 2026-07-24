@@ -6838,13 +6838,16 @@ mod tests {
         let mut e1 = make_episode(1, 1);
         let mut e2 = make_episode(1, 2);
         let mut e3 = make_episode(2, 1);
+        // Insert out of logical order (e3, e1, e2) so a `SELECT *` without (or with a
+        // broken) ORDER BY would return rowid/insertion order, not season/episode
+        // order — this makes the query's explicit ORDER BY load-bearing for the test.
+        e3.save(db)
+            .await
+            .unwrap();
         e1.save(db)
             .await
             .unwrap();
         e2.save(db)
-            .await
-            .unwrap();
-        e3.save(db)
             .await
             .unwrap();
 
@@ -6887,6 +6890,38 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "a series itself has no next episode"
+        );
+    }
+
+    #[tokio::test]
+    async fn next_episode_none_when_episode_has_no_series() {
+        // No HTTP TestServer needed here (avoids torrent-listener TCP port contention
+        // with the other db-backed tests in this file) — a plain migrated in-memory
+        // pool is enough since this guard short-circuits before ever querying it.
+        let db = crate::db::connect("sqlite::memory:", 10_000)
+            .await
+            .unwrap();
+        crate::db::migrate(&db)
+            .await
+            .unwrap();
+        let db = &db;
+
+        // An episode-kind item with no grandparent_id (no series) must short-circuit
+        // before ever querying the DB.
+        let orphan_episode = Media {
+            kind: MediaKind::Episode,
+            idx: Some(1),
+            parent_idx: Some(1),
+            grandparent_id: None,
+            ..Default::default()
+        };
+
+        assert!(
+            Media::next_episode(db, &orphan_episode)
+                .await
+                .unwrap()
+                .is_none(),
+            "an episode with no grandparent_id (series) has no next episode"
         );
     }
 }
