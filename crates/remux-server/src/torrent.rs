@@ -190,27 +190,33 @@ impl TorrentManager {
             store.save(precache_store_key(id), (), PRECACHE_GRACE_TTL);
         }
 
-        let resp = reqwest::Client::new()
-            .get(&url)
-            .header(reqwest::header::RANGE, "bytes=0-")
-            .send()
-            .await
-            .context("precache request failed")?;
-
+        // The request send + the body stream are timed out together so a
+        // stalled connect/handshake can't sneak in below the streaming loop's
+        // own bound (resolve_url above has already fetched torrent metadata,
+        // so send() is expected to return promptly, but nothing guarantees
+        // that under a degraded network).
         let downloaded = Arc::new(AtomicU64::new(0));
-        let stream = resp.bytes_stream();
-        if tokio::time::timeout(
-            timeout,
-            stream_capped(stream, max_bytes, downloaded.clone()),
-        )
-        .await
-        .is_err()
-        {
-            warn!(
-                bytes = downloaded.load(Ordering::Relaxed),
-                ?timeout,
-                "precache timed out; keeping partial download"
-            );
+        let counter = downloaded.clone();
+        let fetch = async move {
+            let resp = reqwest::Client::new()
+                .get(&url)
+                .header(reqwest::header::RANGE, "bytes=0-")
+                .send()
+                .await
+                .context("precache request failed")?;
+            stream_capped(resp.bytes_stream(), max_bytes, counter).await;
+            Ok::<(), anyhow::Error>(())
+        };
+
+        match tokio::time::timeout(timeout, fetch).await {
+            Ok(result) => result?,
+            Err(_) => {
+                warn!(
+                    bytes = downloaded.load(Ordering::Relaxed),
+                    ?timeout,
+                    "precache timed out; keeping partial download"
+                );
+            }
         }
         Ok(downloaded.load(Ordering::Relaxed))
     }
