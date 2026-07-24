@@ -4749,6 +4749,41 @@ impl Media {
             .to_vec())
     }
 
+    /// The episode immediately after `current` within the same series, ordered by
+    /// `(season index, episode index)`. Crosses season boundaries — the last
+    /// episode of a season is followed by the first episode of the next season.
+    /// Returns `None` if `current` is not an episode, has no series
+    /// (`grandparent_id`), or is the last episode of the series.
+    pub async fn next_episode(
+        db: &SqlitePool,
+        current: &Media,
+    ) -> Result<Option<Media>> {
+        if current.kind != MediaKind::Episode {
+            return Ok(None);
+        }
+        let Some(series_id) = current.grandparent_id else {
+            return Ok(None);
+        };
+
+        let episodes = sqlx::query_as::<_, Self>(
+            "SELECT * FROM media \
+             WHERE grandparent_id = $1 AND kind = 'episode' \
+             ORDER BY COALESCE(parent_idx, 9999) ASC, COALESCE(idx, 9999) ASC",
+        )
+        .bind(series_id)
+        .fetch_all(db)
+        .await?;
+
+        let pos = episodes
+            .iter()
+            .position(|e| e.id == current.id);
+        Ok(pos.and_then(|p| {
+            episodes
+                .get(p + 1)
+                .cloned()
+        }))
+    }
+
     pub async fn user_state(
         &mut self,
         db: &SqlitePool,
@@ -6759,6 +6794,99 @@ mod tests {
             !titles.contains(&"Future Episode"),
             "future episode must remain hidden; got: {:?}",
             titles
+        );
+    }
+
+    /// Builds a minimal series -> season 1 (2 episodes) -> season 2 (1 episode)
+    /// hierarchy, all saved to `db`. Returns (series, e1 = S1E1, e2 = S1E2, e3 = S2E1).
+    async fn seed_series_with_episodes(
+        db: &SqlitePool,
+    ) -> (Media, Media, Media, Media) {
+        let series_imdb = NonEmptyString::try_new("tt9990100".to_string()).unwrap();
+        let mut series = Media {
+            kind: MediaKind::Series,
+            title: "Next Episode Test Series".to_string(),
+            external_ids: ExternalIds {
+                imdb: Some(series_imdb.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        series.id = Uuid::from(&series.media_id_raw());
+        series
+            .save(db)
+            .await
+            .unwrap();
+
+        let make_episode = |parent_idx: i64, idx: i64| {
+            let mut ep = Media {
+                kind: MediaKind::Episode,
+                title: format!("S{parent_idx}E{idx}"),
+                external_ids: ExternalIds {
+                    series_imdb: Some(series_imdb.clone()),
+                    ..Default::default()
+                },
+                grandparent_id: Some(series.id),
+                parent_idx: Some(parent_idx),
+                idx: Some(idx),
+                ..Default::default()
+            };
+            ep.id = Uuid::from(&ep.media_id_raw());
+            ep
+        };
+
+        let mut e1 = make_episode(1, 1);
+        let mut e2 = make_episode(1, 2);
+        let mut e3 = make_episode(2, 1);
+        e1.save(db)
+            .await
+            .unwrap();
+        e2.save(db)
+            .await
+            .unwrap();
+        e3.save(db)
+            .await
+            .unwrap();
+
+        (series, e1, e2, e3)
+    }
+
+    #[tokio::test]
+    async fn next_episode_crosses_season_boundary() {
+        let (_server, guard) = crate::integration_test::new_test_server()
+            .await
+            .unwrap();
+        let db = &guard
+            .0
+            .db;
+
+        let (series, e1, e2, e3) = seed_series_with_episodes(db).await;
+
+        let n1 = Media::next_episode(db, &e1)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(n1.id, e2.id);
+
+        let n2 = Media::next_episode(db, &e2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(n2.id, e3.id, "should cross into season 2");
+
+        assert!(
+            Media::next_episode(db, &e3)
+                .await
+                .unwrap()
+                .is_none(),
+            "last episode of the series has no next episode"
+        );
+        assert!(
+            Media::next_episode(db, &series)
+                .await
+                .unwrap()
+                .is_none(),
+            "a series itself has no next episode"
         );
     }
 }
