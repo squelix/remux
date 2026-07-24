@@ -1,13 +1,36 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
     api::{Api, TorrentIdOrHash},
     http_api::HttpApi,
 };
+use remux_utils::Store;
 use tracing::{debug, warn};
+
+/// TTL for the "recently precached" marker (see `precache_store_key`). Long
+/// enough to cover a realistic "watching episode N, will get to N+1
+/// eventually" gap, short enough not to permanently exempt a torrent.
+const PRECACHE_GRACE_TTL: Duration = Duration::from_secs(24 * 3600);
+
+/// Store key prefix marking a torrent as recently precached for an upcoming
+/// episode. `CleanTranscodeFolderTask` scans for this prefix to exempt
+/// precached-but-not-yet-played torrents from its deletion sweep.
+pub const PRECACHE_STORE_PREFIX: &str = "precached_torrent:";
+
+/// Store key marking a torrent as recently precached for an upcoming episode.
+pub fn precache_store_key(torrent_id: usize) -> String {
+    format!("{PRECACHE_STORE_PREFIX}{torrent_id}")
+}
 
 pub struct TorrentManager {
     session: Arc<Session>,
@@ -138,11 +161,34 @@ impl TorrentManager {
     /// by issuing an open-ended Range read. librqbit prioritizes the pieces at
     /// the read position; consumed pieces persist to the torrent data dir so a
     /// later play reuses them. Best-effort.
-    pub async fn precache_head(&self, magnet: &str, max_bytes: u64) -> Result<u64> {
+    ///
+    /// Bounded by `timeout`: unlike normal playback reads (torn down when the
+    /// client disconnects), this stream has no consumer lifecycle, so a slow
+    /// or seederless torrent could otherwise run forever. On timeout, whatever
+    /// was downloaded so far is kept (it's already on disk) and returned as
+    /// `Ok(partial_bytes)` rather than propagated as an error — consistent
+    /// with the stream-error case below, which also logs-and-returns-partial.
+    ///
+    /// As soon as the torrent is added, marks it in `store` (see
+    /// `precache_store_key`) so `CleanTranscodeFolderTask`'s maintenance sweep
+    /// exempts it from deletion during the grace window between "precached"
+    /// and "actually played" — this covers both the in-progress download and
+    /// the wait afterwards.
+    pub async fn precache_head(
+        &self,
+        magnet: &str,
+        max_bytes: u64,
+        timeout: Duration,
+        store: &Store,
+    ) -> Result<u64> {
         let url = self
             .resolve_url(magnet)
             .await
             .context("failed to resolve magnet for precache")?;
+
+        if let Some(id) = Self::torrent_id_from_url(&url) {
+            store.save(precache_store_key(id), (), PRECACHE_GRACE_TTL);
+        }
 
         let resp = reqwest::Client::new()
             .get(&url)
@@ -151,22 +197,22 @@ impl TorrentManager {
             .await
             .context("precache request failed")?;
 
-        let mut stream = resp.bytes_stream();
-        let mut downloaded: u64 = 0;
-        while downloaded < max_bytes {
-            match stream
-                .next()
-                .await
-            {
-                Some(Ok(chunk)) => downloaded += chunk.len() as u64,
-                Some(Err(e)) => {
-                    warn!("precache stream error after {downloaded} bytes: {e:#}");
-                    break;
-                }
-                None => break,
-            }
+        let downloaded = Arc::new(AtomicU64::new(0));
+        let stream = resp.bytes_stream();
+        if tokio::time::timeout(
+            timeout,
+            stream_capped(stream, max_bytes, downloaded.clone()),
+        )
+        .await
+        .is_err()
+        {
+            warn!(
+                bytes = downloaded.load(Ordering::Relaxed),
+                ?timeout,
+                "precache timed out; keeping partial download"
+            );
         }
-        Ok(downloaded)
+        Ok(downloaded.load(Ordering::Relaxed))
     }
 
     /// Delete managed torrents and their files, skipping any whose ID is in `active`.
@@ -243,6 +289,36 @@ impl TorrentManager {
     }
 }
 
+/// Consume `stream` chunk-by-chunk, tracking bytes read in `downloaded`, until
+/// `max_bytes` is reached, the stream errors, or it ends. `downloaded` is an
+/// `Arc` (rather than a plain return value) specifically so that a caller
+/// racing this future against `tokio::time::timeout` can still read the
+/// partial progress after the future is dropped on cancellation.
+async fn stream_capped<S, E>(mut stream: S, max_bytes: u64, downloaded: Arc<AtomicU64>)
+where
+    S: Stream<Item = std::result::Result<bytes::Bytes, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    while downloaded.load(Ordering::Relaxed) < max_bytes {
+        match stream
+            .next()
+            .await
+        {
+            Some(Ok(chunk)) => {
+                downloaded.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+            }
+            Some(Err(e)) => {
+                warn!(
+                    bytes = downloaded.load(Ordering::Relaxed),
+                    "precache stream error: {e:#}"
+                );
+                break;
+            }
+            None => break,
+        }
+    }
+}
+
 /// Extract the `file=` query parameter we encode into our magnet URIs.
 fn parse_file_param(magnet: &str) -> Option<String> {
     let query = magnet
@@ -264,4 +340,75 @@ fn parse_file_idx_param(magnet: &str) -> Option<usize> {
             v.parse()
                 .ok()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::stream;
+
+    /// Sanity check: consuming stops once `max_bytes` worth of chunks have
+    /// been read, even if more chunks remain in the stream.
+    #[tokio::test]
+    async fn stream_capped_stops_at_max_bytes() {
+        let chunks: Vec<std::result::Result<bytes::Bytes, std::io::Error>> = vec![
+            Ok(bytes::Bytes::from_static(&[0u8; 10])),
+            Ok(bytes::Bytes::from_static(&[0u8; 10])),
+            Ok(bytes::Bytes::from_static(&[0u8; 10])),
+        ];
+        let downloaded = Arc::new(AtomicU64::new(0));
+        stream_capped(stream::iter(chunks), 15, downloaded.clone()).await;
+        // The cap is checked between chunks, not mid-chunk, so it can
+        // overshoot slightly — matches the "roughly max_bytes" contract.
+        assert_eq!(downloaded.load(Ordering::Relaxed), 20);
+    }
+
+    /// This is the core mechanism behind Finding 1's timeout fix: when the
+    /// caller races `stream_capped` against `tokio::time::timeout` and the
+    /// timeout wins, the `Arc<AtomicU64>` counter must still reflect whatever
+    /// was downloaded before the future was dropped on cancellation.
+    #[tokio::test]
+    async fn stream_capped_reports_partial_progress_after_external_timeout() {
+        // Yields one 5-byte chunk, then blocks forever (simulating a stalled
+        // seederless torrent that never sends another chunk). `.boxed()`
+        // erases the concrete (non-`Unpin`) `Unfold` future type so it
+        // satisfies `stream_capped`'s `Unpin` bound, same as a real
+        // `reqwest::Response::bytes_stream()` would.
+        let stalled = stream::unfold(0u8, |state| async move {
+            if state == 0 {
+                Some((
+                    Ok::<_, std::io::Error>(bytes::Bytes::from_static(&[0u8; 5])),
+                    1,
+                ))
+            } else {
+                futures_util::future::pending::<()>().await;
+                unreachable!("pending future never resolves")
+            }
+        })
+        .boxed();
+
+        let downloaded = Arc::new(AtomicU64::new(0));
+        let result = tokio::time::timeout(
+            Duration::from_millis(50),
+            stream_capped(stalled, 100, downloaded.clone()),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "expected the outer timeout to fire before the stream completed"
+        );
+        assert_eq!(
+            downloaded.load(Ordering::Relaxed),
+            5,
+            "partial progress must survive cancellation of the streaming future"
+        );
+    }
+
+    #[test]
+    fn precache_store_key_uses_shared_prefix() {
+        let key = precache_store_key(42);
+        assert_eq!(key, "precached_torrent:42");
+        assert!(key.starts_with(PRECACHE_STORE_PREFIX));
+    }
 }

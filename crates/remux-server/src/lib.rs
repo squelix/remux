@@ -447,6 +447,13 @@ pub struct Config {
     /// Maximum bytes to pre-download from the next episode's head.
     #[serde(default = "default_precache_bytes")]
     pub precache_bytes: u64,
+    /// Hard time bound (seconds) on the next-episode precache download.
+    /// Normal playback reads are torn down when the client disconnects, but
+    /// the precache stream has no consumer lifecycle, so this bounds a slow
+    /// or seederless torrent from running forever. Partial progress before
+    /// the timeout is kept (pieces already downloaded persist to disk).
+    #[serde(default = "default_precache_timeout_secs")]
+    pub precache_timeout_secs: u64,
 }
 
 fn default_remuxdb_url() -> Option<String> {
@@ -483,6 +490,10 @@ fn default_precache_threshold_percent() -> u8 {
 
 fn default_precache_bytes() -> u64 {
     100 * 1024 * 1024
+}
+
+fn default_precache_timeout_secs() -> u64 {
+    60
 }
 
 impl Config {
@@ -532,6 +543,7 @@ impl Default for Config {
             precache_next_episode: false,
             precache_threshold_percent: default_precache_threshold_percent(),
             precache_bytes: default_precache_bytes(),
+            precache_timeout_secs: default_precache_timeout_secs(),
         }
         .resolve()
     }

@@ -491,6 +491,7 @@ impl PlaybackSessionManager {
         let ctx = ctx.clone();
         let user_id = ps.user_id;
         let max_bytes = cfg.precache_bytes;
+        let timeout = Duration::from_secs(cfg.precache_timeout_secs);
         tokio::spawn(async move {
             let Ok(Some(next)) = db::Media::next_episode(&ctx.db, &current).await
             else {
@@ -532,7 +533,7 @@ impl PlaybackSessionManager {
 
             match ctx
                 .torrent
-                .precache_head(&magnet, max_bytes)
+                .precache_head(&magnet, max_bytes, timeout, &ctx.store)
                 .await
             {
                 Ok(n) => {

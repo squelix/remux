@@ -3,10 +3,10 @@ use async_trait::async_trait;
 #[cfg(unix)]
 use libc;
 use std::{collections::HashSet, sync::Arc};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::{ProgressReporter, Task, TaskCategory, TaskService};
-use crate::AppContext;
+use crate::{AppContext, torrent::PRECACHE_STORE_PREFIX};
 
 pub struct CleanTranscodeFolderTask;
 
@@ -106,6 +106,16 @@ impl Task for CleanTranscodeFolderTask {
             }
         }
 
+        // Also exempt torrents recently precached for an upcoming episode. A
+        // precached torrent belongs to the *next* episode, which nobody is
+        // actively playing yet, so it never shows up in `active_torrent_ids`
+        // above — without this, this sweep could delete a precached-but-not-
+        // yet-played torrent (and its downloaded head pieces) out from under
+        // the feature, silently defeating it. See `precache_store_key`.
+        let precache_exempt = precached_torrent_ids(&ctx.store);
+        debug!(exempt = precache_exempt.len(), "precache-exempt torrents");
+        active_torrent_ids.extend(precache_exempt);
+
         let deleted = ctx
             .torrent
             .delete_unused_with_files(&active_torrent_ids)
@@ -118,5 +128,56 @@ impl Task for CleanTranscodeFolderTask {
 
         progress.set(100.0);
         Ok(())
+    }
+}
+
+/// Torrent IDs currently marked "recently precached" (see
+/// `torrent::precache_store_key`), exempt from deletion for the marker's
+/// grace window.
+fn precached_torrent_ids(store: &remux_utils::Store) -> HashSet<usize> {
+    store
+        .scan_keys(PRECACHE_STORE_PREFIX)
+        .into_iter()
+        .filter_map(|key| {
+            key.strip_prefix(PRECACHE_STORE_PREFIX)?
+                .parse()
+                .ok()
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn precached_torrent_ids_reads_back_marked_ids() {
+        let store = remux_utils::Store::new(100);
+        store.save(
+            crate::torrent::precache_store_key(7),
+            (),
+            Duration::from_secs(3600),
+        );
+        store.save(
+            crate::torrent::precache_store_key(9),
+            (),
+            Duration::from_secs(3600),
+        );
+
+        let ids = precached_torrent_ids(&store);
+        assert_eq!(ids, HashSet::from([7, 9]));
+    }
+
+    #[test]
+    fn precached_torrent_ids_ignores_unrelated_keys() {
+        let store = remux_utils::Store::new(100);
+        store.save(
+            "pstream:some-item:device",
+            uuid::Uuid::nil(),
+            Duration::from_secs(3600),
+        );
+
+        assert!(precached_torrent_ids(&store).is_empty());
     }
 }
