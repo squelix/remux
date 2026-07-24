@@ -154,6 +154,11 @@ pub async fn report_playback_progress(
             .ctx
             .ws_tx
             .send(crate::ws::WsEvent::SessionsChanged);
+        state
+            .ctx
+            .sessions
+            .maybe_precache_next(&state.ctx, psid)
+            .await;
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }

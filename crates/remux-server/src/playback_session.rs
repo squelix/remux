@@ -35,6 +35,8 @@ pub struct PlaybackSession {
     pub group_id: Option<Uuid>,
     /// Kind of the item being played, used to populate NowPlayingItem in session broadcasts.
     pub item_kind: Option<db::MediaKind>,
+    /// Item id we already evaluated for next-episode precache (fire-once guard).
+    pub precached_for_item: Option<Uuid>,
 }
 
 #[derive(Clone)]
@@ -177,6 +179,7 @@ impl PlaybackSessionManager {
             transcode: None,
             group_id,
             item_kind,
+            precached_for_item: None,
         };
 
         self.insert(ps);
@@ -413,6 +416,131 @@ impl PlaybackSessionManager {
         }
 
         Ok(())
+    }
+
+    /// Atomically claim next-episode precache for (session, item). Returns true
+    /// only for the first caller; subsequent calls for the same item return false.
+    ///
+    /// `get_mut` holds the shard lock synchronously, so the check-and-set below
+    /// happens under that lock — no `await` in between — closing the race where
+    /// two concurrent progress reports for the same item could both observe
+    /// "not yet claimed" and both spawn a download.
+    fn try_claim_precache(&self, psid: &str, item_id: Uuid) -> bool {
+        if let Some(mut e) = self
+            .sessions
+            .get_mut(psid)
+        {
+            if e.precached_for_item == Some(item_id) {
+                return false;
+            }
+            e.precached_for_item = Some(item_id);
+            return true;
+        }
+        false
+    }
+
+    /// Best-effort: when the user crosses the configured watch percentage,
+    /// resolve and pre-download the head of the next episode.
+    ///
+    /// Torrent sources only (v1) — sources that resolve to Http/Local/Rtsp/Opendal
+    /// are skipped since there's nothing useful to "precache" ahead of a direct
+    /// fetch. Fires at most once per (session, item): the fire-once guard is
+    /// claimed atomically (see `try_claim_precache`) before any network call, so
+    /// re-sent progress reports for the same item are cheap no-ops. Never blocks
+    /// the caller — the network-bound work (next-episode lookup, on-demand stream
+    /// resolution, and the actual download) runs in a detached `tokio::spawn`, and
+    /// any failure there is logged and swallowed rather than surfaced.
+    pub async fn maybe_precache_next(&self, ctx: &crate::AppContext, psid: &str) {
+        let cfg = &ctx.config;
+        if !cfg.precache_next_episode {
+            return;
+        }
+        let Some(ps) = self.get(psid) else {
+            return;
+        };
+        if ps.precached_for_item == Some(ps.item_id) {
+            return; // already evaluated this item (cheap fast-path)
+        }
+
+        // Need runtime + position to compute percentage.
+        let Ok(Some(current)) = db::Media::get_by_id(&ctx.db, &ps.item_id).await else {
+            return;
+        };
+        if current.kind != db::MediaKind::Episode {
+            return;
+        }
+        let Some(runtime) = current
+            .runtime
+            .filter(|r| *r > 0)
+        else {
+            return;
+        };
+        let position_secs = ps.position_ticks / 10_000_000;
+        if position_secs * 100 / runtime < cfg.precache_threshold_percent as i64 {
+            return; // not yet — do NOT claim; re-evaluate on later reports
+        }
+
+        // Threshold crossed: claim exactly once for this item.
+        if !self.try_claim_precache(psid, ps.item_id) {
+            return;
+        }
+
+        // Everything below (next-episode lookup, on-demand source resolution,
+        // download) is network-bound — run detached so the progress response
+        // isn't delayed by it.
+        let ctx = ctx.clone();
+        let user_id = ps.user_id;
+        let max_bytes = cfg.precache_bytes;
+        tokio::spawn(async move {
+            let Ok(Some(next)) = db::Media::next_episode(&ctx.db, &current).await
+            else {
+                return;
+            };
+            let next_id = next.id;
+
+            // Resolve the next episode's sources on-demand (they are NOT
+            // pre-persisted), exactly like the play path does via StreamService.
+            let mut svc = crate::services::stream_service::StreamService::new(
+                crate::services::stream_service::StreamServiceConfig {
+                    ctx: ctx.clone(),
+                    item_id: next_id,
+                    requested_id: None,
+                    show_ungrouped: false,
+                    stream_filter: None,
+                    user_id: Some(user_id),
+                },
+            );
+            if svc
+                .load(next)
+                .await
+                .is_err()
+            {
+                return; // no playable sources resolved
+            }
+            let Some(magnet) = svc
+                .streams
+                .iter()
+                .find_map(|s| {
+                    s.stream_info
+                        .as_ref()?
+                        .descriptor
+                        .torrent_magnet()
+                })
+            else {
+                return; // no torrent source — v1 skips Http/Local/Rtsp/Opendal
+            };
+
+            match ctx
+                .torrent
+                .precache_head(&magnet, max_bytes)
+                .await
+            {
+                Ok(n) => {
+                    info!(next_episode = %next_id, bytes = n, "⇊ precached next-episode head")
+                }
+                Err(e) => warn!(next_episode = %next_id, "precache failed: {e:#}"),
+            }
+        });
     }
 
     /// Handle a `POST /sessions/playing/stopped` report.
@@ -672,6 +800,7 @@ impl PlaybackSessionManager {
                         last_activity: Utc::now(),
                         group_id: None,
                         item_kind: None,
+                        precached_for_item: None,
                     },
                 );
         }
