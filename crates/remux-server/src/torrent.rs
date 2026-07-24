@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
     api::{Api, TorrentIdOrHash},
@@ -131,6 +132,41 @@ impl TorrentManager {
             "http://127.0.0.1:{}/torrents/{}/stream/{}",
             self.http_port, torrent_id, file_idx
         ))
+    }
+
+    /// Pre-download roughly the first `max_bytes` of the resolved torrent file
+    /// by issuing an open-ended Range read. librqbit prioritizes the pieces at
+    /// the read position; consumed pieces persist to the torrent data dir so a
+    /// later play reuses them. Best-effort.
+    pub async fn precache_head(&self, magnet: &str, max_bytes: u64) -> Result<u64> {
+        let url = self
+            .resolve_url(magnet)
+            .await
+            .context("failed to resolve magnet for precache")?;
+
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .header(reqwest::header::RANGE, "bytes=0-")
+            .send()
+            .await
+            .context("precache request failed")?;
+
+        let mut stream = resp.bytes_stream();
+        let mut downloaded: u64 = 0;
+        while downloaded < max_bytes {
+            match stream
+                .next()
+                .await
+            {
+                Some(Ok(chunk)) => downloaded += chunk.len() as u64,
+                Some(Err(e)) => {
+                    warn!("precache stream error after {downloaded} bytes: {e:#}");
+                    break;
+                }
+                None => break,
+            }
+        }
+        Ok(downloaded)
     }
 
     /// Delete managed torrents and their files, skipping any whose ID is in `active`.
