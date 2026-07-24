@@ -148,9 +148,17 @@ impl StreamDescriptor {
     /// Reconstruct the magnet URI for `Torrent` descriptors; `None` otherwise.
     pub fn torrent_magnet(&self) -> Option<String> {
         match self {
-            Self::Torrent { info_hash, file_hint, file_idx, trackers } => Some(
-                build_magnet(info_hash, file_hint.as_deref(), *file_idx, trackers),
-            ),
+            Self::Torrent {
+                info_hash,
+                file_hint,
+                file_idx,
+                trackers,
+            } => Some(build_magnet(
+                info_hash,
+                file_hint.as_deref(),
+                *file_idx,
+                trackers,
+            )),
             _ => None,
         }
     }
@@ -291,7 +299,13 @@ pub struct TorrentSource {
 
 impl TorrentSource {
     fn to_magnet(&self) -> String {
-        build_magnet(&self.info_hash, self.file_hint.as_deref(), self.file_idx, &self.trackers)
+        build_magnet(
+            &self.info_hash,
+            self.file_hint
+                .as_deref(),
+            self.file_idx,
+            &self.trackers,
+        )
     }
 }
 
@@ -503,10 +517,16 @@ mod tests {
             file_idx: Some(3),
             trackers: vec!["udp://t.example:6969/announce".into()],
         };
-        let m = d.torrent_magnet().unwrap();
+        let m = d
+            .torrent_magnet()
+            .unwrap();
         assert!(m.starts_with("magnet:?xt=urn:btih:abc123"));
         assert!(m.contains("file_idx=3"));
         assert!(m.contains("tr=udp"));
-        assert!(StreamDescriptor::Local("/x".into()).torrent_magnet().is_none());
+        assert!(
+            StreamDescriptor::Local("/x".into())
+                .torrent_magnet()
+                .is_none()
+        );
     }
 }
