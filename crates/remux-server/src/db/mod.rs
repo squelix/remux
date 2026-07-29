@@ -17,6 +17,7 @@ pub mod media;
 pub mod settings;
 pub mod stream_group;
 pub mod task;
+pub mod trakt_token;
 pub mod user;
 pub use api_key::*;
 pub use image::*;
@@ -25,6 +26,7 @@ pub use media::*;
 pub use settings::*;
 pub use stream_group::*;
 pub use task::*;
+pub use trakt_token::*;
 pub use user::*;
 
 pub async fn connect(url: &str, slow_query_threshold_ms: u64) -> Result<SqlitePool> {
