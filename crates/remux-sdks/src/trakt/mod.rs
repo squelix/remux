@@ -247,6 +247,113 @@ impl Endpoint for ScrobbleStopEndpoint {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DeviceCodeResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_url: String,
+    pub expires_in: i64,
+    pub interval: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceCodeEndpoint {
+    pub client_id: String,
+}
+
+impl Endpoint for DeviceCodeEndpoint {
+    type Output = DeviceCodeResponse;
+    fn path(&self) -> String {
+        "oauth/device/code".to_string()
+    }
+    fn method(&self) -> Method {
+        Method::POST
+    }
+    fn body(&self) -> Body {
+        Body::Json(serde_json::json!({ "client_id": self.client_id }))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DeviceTokenResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_in: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceTokenEndpoint {
+    pub client_id: String,
+    pub client_secret: String,
+    pub device_code: String,
+}
+
+impl Endpoint for DeviceTokenEndpoint {
+    type Output = DeviceTokenResponse;
+    fn path(&self) -> String {
+        "oauth/device/token".to_string()
+    }
+    fn method(&self) -> Method {
+        Method::POST
+    }
+    fn body(&self) -> Body {
+        Body::Json(serde_json::json!({
+            "code": self.device_code,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+        }))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RefreshTokenEndpoint {
+    pub client_id: String,
+    pub client_secret: String,
+    pub refresh_token: String,
+}
+
+impl Endpoint for RefreshTokenEndpoint {
+    type Output = DeviceTokenResponse;
+    fn path(&self) -> String {
+        "oauth/token".to_string()
+    }
+    fn method(&self) -> Method {
+        Method::POST
+    }
+    fn body(&self) -> Body {
+        Body::Json(serde_json::json!({
+            "refresh_token": self.refresh_token,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "grant_type": "refresh_token",
+        }))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RevokeTokenEndpoint {
+    pub client_id: String,
+    pub client_secret: String,
+    pub token: String,
+}
+
+impl Endpoint for RevokeTokenEndpoint {
+    type Output = serde_json::Value;
+    fn path(&self) -> String {
+        "oauth/revoke".to_string()
+    }
+    fn method(&self) -> Method {
+        Method::POST
+    }
+    fn body(&self) -> Body {
+        Body::Json(serde_json::json!({
+            "token": self.token,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+        }))
+    }
+}
+
 #[cfg(test)]
 mod scrobble_tests {
     use super::*;
@@ -329,5 +436,96 @@ mod scrobble_tests {
             progress: 10.0,
         };
         assert_eq!(ep.path(), "scrobble/pause");
+    }
+
+    #[test]
+    fn device_code_endpoint_shape() {
+        let ep = DeviceCodeEndpoint {
+            client_id: "cid".to_string(),
+        };
+        assert_eq!(ep.path(), "oauth/device/code");
+        assert_eq!(ep.method(), http::Method::POST);
+        let Body::Json(json) = ep.body() else {
+            panic!("expected json body")
+        };
+        assert_eq!(json, serde_json::json!({ "client_id": "cid" }));
+    }
+
+    #[test]
+    fn device_token_endpoint_shape() {
+        let ep = DeviceTokenEndpoint {
+            client_id: "cid".to_string(),
+            client_secret: "secret".to_string(),
+            device_code: "dc-1".to_string(),
+        };
+        assert_eq!(ep.path(), "oauth/device/token");
+        let Body::Json(json) = ep.body() else {
+            panic!("expected json body")
+        };
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "code": "dc-1",
+                "client_id": "cid",
+                "client_secret": "secret",
+            })
+        );
+    }
+
+    #[test]
+    fn refresh_token_endpoint_shape() {
+        let ep = RefreshTokenEndpoint {
+            client_id: "cid".to_string(),
+            client_secret: "secret".to_string(),
+            refresh_token: "rt-1".to_string(),
+        };
+        assert_eq!(ep.path(), "oauth/token");
+        let Body::Json(json) = ep.body() else {
+            panic!("expected json body")
+        };
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "refresh_token": "rt-1",
+                "client_id": "cid",
+                "client_secret": "secret",
+                "grant_type": "refresh_token",
+            })
+        );
+    }
+
+    #[test]
+    fn device_code_response_deserializes() {
+        let json = serde_json::json!({
+            "device_code": "dc",
+            "user_code": "ABCD-1234",
+            "verification_url": "https://trakt.tv/activate",
+            "expires_in": 600,
+            "interval": 5
+        });
+        let resp: DeviceCodeResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(resp.user_code, "ABCD-1234");
+        assert_eq!(resp.interval, 5);
+    }
+
+    #[test]
+    fn revoke_token_endpoint_shape() {
+        let ep = RevokeTokenEndpoint {
+            client_id: "cid".to_string(),
+            client_secret: "secret".to_string(),
+            token: "at-1".to_string(),
+        };
+        assert_eq!(ep.path(), "oauth/revoke");
+        let Body::Json(json) = ep.body() else {
+            panic!("expected json body")
+        };
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "token": "at-1",
+                "client_id": "cid",
+                "client_secret": "secret",
+            })
+        );
     }
 }
