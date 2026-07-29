@@ -64,6 +64,7 @@ pub mod services;
 pub mod stream;
 pub mod tasks;
 mod torrent;
+mod trakt;
 mod web_client;
 mod web_patches;
 mod web_transform;
