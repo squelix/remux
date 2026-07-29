@@ -465,6 +465,8 @@ pub struct ServerConfiguration {
     #[default(0_i64)]
     pub digital_release_buffer_days: i64,
     pub tmdb_api_key: Option<String>,
+    pub trakt_client_id: Option<String>,
+    pub trakt_client_secret: Option<String>,
     pub subtitle_languages: Option<Vec<String>>,
     #[default(Some(false))]
     pub enable_subtitles_detail: Option<bool>,
@@ -1708,6 +1710,25 @@ mod tests {
     fn format_size_rule_falls_back_to_mib() {
         let v = 500 * 1024 * 1024;
         assert_eq!(format_size_rule(NumericOp::Gt, v), "> 500.00 MiB");
+    }
+
+    #[test]
+    fn server_configuration_default_has_no_trakt_credentials() {
+        let cfg = ServerConfiguration::default();
+        assert!(cfg.trakt_client_id.is_none());
+        assert!(cfg.trakt_client_secret.is_none());
+    }
+
+    #[test]
+    fn server_configuration_trakt_credentials_round_trip_json() {
+        let mut cfg = ServerConfiguration::default();
+        cfg.trakt_client_id = Some("client-id".to_string());
+        cfg.trakt_client_secret = Some("client-secret".to_string());
+
+        let json = serde_json::to_string(&cfg).unwrap();
+        let parsed: ServerConfiguration = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.trakt_client_id.as_deref(), Some("client-id"));
+        assert_eq!(parsed.trakt_client_secret.as_deref(), Some("client-secret"));
     }
 }
 
