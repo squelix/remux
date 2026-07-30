@@ -116,6 +116,7 @@ pub fn DashboardLayout() -> Element {
         Route::AccessApiKeysRoute => "API Keys",
         Route::TasksRoute => "Tasks",
         Route::ActivityRoute => "Activity",
+        Route::IntegrationsTraktRoute => "Trakt",
         Route::NotFound { .. } => "",
     };
 
@@ -259,6 +260,16 @@ pub fn DashboardLayout() -> Element {
                     }
 
                     div { class: "nav-divider" }
+
+                    SidebarGroup {
+                        label: "Integrations",
+                        active: matches!(route, Route::IntegrationsTraktRoute),
+                        NavSubItem {
+                            label: "Trakt",
+                            active: route == Route::IntegrationsTraktRoute,
+                            on_click: move |_| { navigator().push(Route::IntegrationsTraktRoute); sidebar_open.set(false); },
+                        }
+                    }
 
                     NavItem {
                         label: "Activity",

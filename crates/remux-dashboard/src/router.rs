@@ -47,6 +47,8 @@ pub enum Route {
     TasksRoute,
     #[route("/activity")]
     ActivityRoute,
+    #[route("/integrations/trakt")]
+    IntegrationsTraktRoute,
     #[end_layout]
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },
@@ -164,6 +166,12 @@ pub(crate) fn TasksRoute() -> Element {
 pub(crate) fn ActivityRoute() -> Element {
     let app_state = use_context::<AppState>();
     rsx! { SessionsCard { app_state } }
+}
+
+#[component]
+pub(crate) fn IntegrationsTraktRoute() -> Element {
+    let app_state = use_context::<AppState>();
+    rsx! { TraktAccountCard { app_state } }
 }
 
 #[component]
