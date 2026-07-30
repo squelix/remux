@@ -1754,7 +1754,7 @@ pub fn TraktSettingsCard(app_state: AppState) -> Element {
                     );
                     base_cfg.set(Some(cfg));
                 }
-                Err(e) => save_error.set(Some(format!("Failed to load settings: {e}"))),
+                Err(e) => save_error.set(Some(format!("Failed to load settings: {}", e.user_message()))),
             }
             loading.set(false);
         });
