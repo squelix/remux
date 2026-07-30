@@ -57,7 +57,8 @@ impl TraktAuthService {
             .filter(|k| !k.is_empty())
             .ok_or_else(|| anyhow::anyhow!("Trakt client_id is not configured"))?;
 
-        let client = sdks::RestClient::new(trakt_base_url)?;
+        let client =
+            sdks::RestClient::new(trakt_base_url)?.with_auth(sdks::trakt::TraktOAuthAuth);
         let resp = client
             .execute(sdks::trakt::DeviceCodeEndpoint { client_id })
             .await?;
@@ -94,7 +95,8 @@ impl TraktAuthService {
             anyhow::bail!("Trakt client_id/client_secret is not configured");
         };
 
-        let client = sdks::RestClient::new(trakt_base_url)?;
+        let client =
+            sdks::RestClient::new(trakt_base_url)?.with_auth(sdks::trakt::TraktOAuthAuth);
         let result = client
             .execute(sdks::trakt::DeviceTokenEndpoint {
                 client_id,

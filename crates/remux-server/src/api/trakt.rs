@@ -110,7 +110,9 @@ pub async fn disconnect_trakt_auth(
         if let (Some(client_id), Some(client_secret)) =
             (cfg.trakt_client_id, cfg.trakt_client_secret)
         {
-            if let Ok(client) = sdks::RestClient::new(&state.ctx.config.trakt_base_url) {
+            if let Ok(client) = sdks::RestClient::new(&state.ctx.config.trakt_base_url)
+                .map(|c| c.with_auth(sdks::trakt::TraktOAuthAuth))
+            {
                 let _ = client
                     .execute(sdks::trakt::RevokeTokenEndpoint {
                         client_id,

@@ -180,7 +180,7 @@ async fn refresh_access_token(
     user_id: Uuid,
     refresh_token: &str,
 ) -> anyhow::Result<String> {
-    let client = sdks::RestClient::new(trakt_base_url)?;
+    let client = sdks::RestClient::new(trakt_base_url)?.with_auth(sdks::trakt::TraktOAuthAuth);
     let resp = client
         .execute(sdks::trakt::RefreshTokenEndpoint {
             client_id: client_id.to_string(),

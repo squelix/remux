@@ -17,6 +17,23 @@ impl Auth for TraktAuth {
     }
 }
 
+/// Auth for Trakt's unauthenticated OAuth endpoints (device code, device
+/// token, refresh, revoke). These endpoints carry `client_id`/`client_secret`
+/// in the JSON body rather than headers, so no `trakt-api-key` header is
+/// needed here — only the version/Accept/User-Agent headers that Trakt's API
+/// expects on every request (see `TraktAuth`/`TraktUserAuth` for the
+/// precedent on spoofing the User-Agent).
+#[derive(Clone, Debug)]
+pub struct TraktOAuthAuth;
+
+impl Auth for TraktOAuthAuth {
+    fn apply(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        req.header("trakt-api-version", "2")
+            .header("Accept", "application/json")
+            .header("User-Agent", "Mozilla/5.0 (compatible; remux/1.0)")
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TraktItemIds {
     pub imdb: Option<String>,
@@ -373,6 +390,21 @@ mod scrobble_tests {
         assert_eq!(req.headers().get("trakt-api-key").unwrap(), "cid");
         assert_eq!(req.headers().get("trakt-api-version").unwrap(), "2");
         assert_eq!(req.headers().get("authorization").unwrap(), "Bearer tok");
+    }
+
+    #[test]
+    fn trakt_oauth_auth_sets_expected_headers() {
+        let auth = TraktOAuthAuth;
+        let client = reqwest::Client::new();
+        let req = auth
+            .apply(client.get("http://example.com"))
+            .build()
+            .unwrap();
+
+        assert_eq!(req.headers().get("trakt-api-version").unwrap(), "2");
+        assert_eq!(req.headers().get("accept").unwrap(), "application/json");
+        assert!(req.headers().get("user-agent").is_some());
+        assert!(req.headers().get("trakt-api-key").is_none());
     }
 
     #[test]

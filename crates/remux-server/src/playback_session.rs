@@ -127,11 +127,8 @@ impl PlaybackSessionManager {
             None
         };
 
-        let item_kind = db::Media::get_by_id(db, &item_id)
-            .await
-            .ok()
-            .flatten()
-            .map(|m| m.kind);
+        let fetched_media = db::Media::get_by_id(db, &item_id).await.ok().flatten();
+        let item_kind = fetched_media.as_ref().map(|m| m.kind.clone());
 
         let ps = PlaybackSession {
             play_session_id: play_session_id.clone(),
@@ -183,7 +180,7 @@ impl PlaybackSessionManager {
 
         self.insert(ps);
 
-        if let Ok(Some(media)) = db::Media::get_by_id(db, &item_id).await {
+        if let Some(media) = fetched_media {
             crate::trakt::scrobble::spawn(
                 db.clone(),
                 self.trakt_base_url.clone(),
