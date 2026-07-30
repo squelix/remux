@@ -22,8 +22,13 @@ pub async fn start_trakt_auth(
         )
         .await
         .map_err(|e| {
-            let detail = e.to_string();
-            e.context_internal(&detail)
+            let msg = e.to_string();
+            if msg.contains("is not configured") {
+                e.context_internal(&msg)
+            } else {
+                tracing::warn!(error = ?e, "failed to start Trakt device authorization");
+                e.context_internal("failed to start Trakt device authorization")
+            }
         })?;
 
     Ok(Json(TraktAuthStartResponse {
@@ -49,8 +54,13 @@ pub async fn poll_trakt_auth(
         )
         .await
         .map_err(|e| {
-            let detail = e.to_string();
-            e.context_internal(&detail)
+            let msg = e.to_string();
+            if msg.contains("is not configured") {
+                e.context_internal(&msg)
+            } else {
+                tracing::warn!(error = ?e, "failed to poll Trakt device authorization");
+                e.context_internal("failed to poll Trakt device authorization")
+            }
         })?;
 
     let status = match status {
