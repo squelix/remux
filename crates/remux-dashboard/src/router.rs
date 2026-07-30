@@ -31,6 +31,8 @@ pub enum Route {
     SettingsSearchRoute,
     #[route("/settings/jellyfin-sync")]
     SettingsJellyfinSyncRoute,
+    #[route("/settings/trakt")]
+    SettingsTraktRoute,
     #[route("/settings/intro")]
     SettingsIntroRoute,
     #[route("/settings/remuxdb")]
@@ -114,6 +116,12 @@ pub(crate) fn SettingsSearchRoute() -> Element {
 pub(crate) fn SettingsJellyfinSyncRoute() -> Element {
     let app_state = use_context::<AppState>();
     rsx! { JellyfinImportCard { app_state } }
+}
+
+#[component]
+pub(crate) fn SettingsTraktRoute() -> Element {
+    let app_state = use_context::<AppState>();
+    rsx! { TraktSettingsCard { app_state } }
 }
 
 #[component]

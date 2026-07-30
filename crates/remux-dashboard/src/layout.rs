@@ -108,6 +108,7 @@ pub fn DashboardLayout() -> Element {
         Route::SettingsPlaybackRoute => "Playback",
         Route::SettingsSearchRoute => "Search",
         Route::SettingsJellyfinSyncRoute => "Jellyfin Sync",
+        Route::SettingsTraktRoute => "Trakt",
         Route::SettingsBrandingRoute => "Branding",
         Route::SettingsIntroRoute => "Intro",
         Route::SettingsRemuxdbRoute => "Remuxdb",
@@ -195,6 +196,7 @@ pub fn DashboardLayout() -> Element {
                             | Route::SettingsPlaybackRoute
                             | Route::SettingsSearchRoute
                             | Route::SettingsJellyfinSyncRoute
+                            | Route::SettingsTraktRoute
                             | Route::SettingsBrandingRoute
                             | Route::SettingsIntroRoute
                             | Route::SettingsRemuxdbRoute
@@ -218,6 +220,11 @@ pub fn DashboardLayout() -> Element {
                             label: "Jellyfin Sync",
                             active: route == Route::SettingsJellyfinSyncRoute,
                             on_click: move |_| { navigator().push(Route::SettingsJellyfinSyncRoute); sidebar_open.set(false); },
+                        }
+                        NavSubItem {
+                            label: "Trakt",
+                            active: route == Route::SettingsTraktRoute,
+                            on_click: move |_| { navigator().push(Route::SettingsTraktRoute); sidebar_open.set(false); },
                         }
                         NavSubItem {
                             label: "Intro",
