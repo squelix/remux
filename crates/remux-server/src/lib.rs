@@ -247,12 +247,16 @@ pub async fn init_app(
         );
     }
 
+    let trakt_base_url = config.trakt_base_url.clone();
     let addons = addons::AddonService::from_db(&conn, &config).await?;
     let ctx = AppContext {
         config,
         db: conn.clone(),
         store: Store::new_weighted(128 * 1024 * 1024),
-        sessions: playback_session::PlaybackSessionManager::new("transcode_sessions"),
+        sessions: playback_session::PlaybackSessionManager::new(
+            "transcode_sessions",
+            trakt_base_url,
+        ),
         torrent: Arc::new(torrent_mgr),
         ws_tx: tokio::sync::broadcast::channel(128).0,
         default_web_client: Arc::new(tokio::sync::RwLock::new(

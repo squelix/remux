@@ -41,15 +41,17 @@ pub struct PlaybackSession {
 pub struct PlaybackSessionManager {
     sessions: Arc<DashMap<String, PlaybackSession>>,
     base_dir: PathBuf,
+    trakt_base_url: String,
 }
 
 impl PlaybackSessionManager {
-    pub fn new(base_dir: impl Into<PathBuf>) -> Self {
+    pub fn new(base_dir: impl Into<PathBuf>, trakt_base_url: impl Into<String>) -> Self {
         let base_dir = base_dir.into();
         let _ = std::fs::create_dir_all(&base_dir);
         Self {
             sessions: Arc::new(DashMap::new()),
             base_dir,
+            trakt_base_url: trakt_base_url.into(),
         }
     }
 
@@ -180,6 +182,17 @@ impl PlaybackSessionManager {
         };
 
         self.insert(ps);
+
+        if let Ok(Some(media)) = db::Media::get_by_id(db, &item_id).await {
+            crate::trakt::scrobble::spawn(
+                db.clone(),
+                self.trakt_base_url.clone(),
+                auth_session.user.id,
+                media,
+                data.position_ticks.unwrap_or(0),
+                crate::trakt::scrobble::ScrobbleAction::Start,
+            );
+        }
 
         // For transcode sessions, master_hls_video fires the info log once it
         // has full codec/bitrate/reasons info. For direct play/stream, log here.
@@ -410,6 +423,23 @@ impl PlaybackSessionManager {
                 None, // no watched-threshold check on progress
             )
             .await?;
+
+            let was_paused = ps.is_paused;
+            if data.is_paused != was_paused {
+                let action = if data.is_paused {
+                    crate::trakt::scrobble::ScrobbleAction::Pause
+                } else {
+                    crate::trakt::scrobble::ScrobbleAction::Start
+                };
+                crate::trakt::scrobble::spawn(
+                    db.clone(),
+                    self.trakt_base_url.clone(),
+                    user.id,
+                    media,
+                    position_ticks,
+                    action,
+                );
+            }
         }
 
         Ok(())
@@ -456,6 +486,15 @@ impl PlaybackSessionManager {
                     media.runtime, // Some(runtime) triggers watched-threshold check
                 )
                 .await?;
+
+                crate::trakt::scrobble::spawn(
+                    db.clone(),
+                    self.trakt_base_url.clone(),
+                    user.id,
+                    media,
+                    final_ticks.unwrap_or(0),
+                    crate::trakt::scrobble::ScrobbleAction::Stop,
+                );
             }
         }
 
