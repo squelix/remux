@@ -38,17 +38,7 @@ pub fn TraktAccountCard(app_state: AppState) -> Element {
                     state.set(TraktConnectionState::Connected)
                 }
                 Ok(_) => state.set(TraktConnectionState::NotConnected),
-                Err(e) => {
-                    let msg = e.user_message();
-                    if msg.contains("client_id is not configured") {
-                        state.set(TraktConnectionState::Error(
-                            "Trakt is not configured by the server administrator."
-                                .to_string(),
-                        ));
-                    } else {
-                        state.set(TraktConnectionState::NotConnected);
-                    }
-                }
+                Err(_) => state.set(TraktConnectionState::NotConnected),
             }
         });
     });
@@ -120,7 +110,17 @@ pub fn TraktAccountCard(app_state: AppState) -> Element {
                         ));
                     });
                 }
-                Err(e) => state.set(TraktConnectionState::Error(e.user_message())),
+                Err(e) => {
+                    let msg = e.user_message();
+                    if msg.contains("is not configured") {
+                        state.set(TraktConnectionState::Error(
+                            "Trakt is not configured by the server administrator."
+                                .to_string(),
+                        ));
+                    } else {
+                        state.set(TraktConnectionState::Error(msg));
+                    }
+                }
             }
         });
     };

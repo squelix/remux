@@ -1775,10 +1775,12 @@ pub fn TraktSettingsCard(app_state: AppState) -> Element {
             .peek()
             .clone();
 
-        let mut cfg = base_cfg
+        let Some(mut cfg) = base_cfg
             .peek()
             .clone()
-            .unwrap_or_default();
+        else {
+            return;
+        };
         cfg.trakt_client_id = if id.is_empty() { None } else { Some(id) };
         cfg.trakt_client_secret = if secret.is_empty() {
             None
