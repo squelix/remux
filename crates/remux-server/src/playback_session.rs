@@ -45,7 +45,10 @@ pub struct PlaybackSessionManager {
 }
 
 impl PlaybackSessionManager {
-    pub fn new(base_dir: impl Into<PathBuf>, trakt_base_url: impl Into<String>) -> Self {
+    pub fn new(
+        base_dir: impl Into<PathBuf>,
+        trakt_base_url: impl Into<String>,
+    ) -> Self {
         let base_dir = base_dir.into();
         let _ = std::fs::create_dir_all(&base_dir);
         Self {
@@ -127,8 +130,16 @@ impl PlaybackSessionManager {
             None
         };
 
-        let fetched_media = db::Media::get_by_id(db, &item_id).await.ok().flatten();
-        let item_kind = fetched_media.as_ref().map(|m| m.kind.clone());
+        let fetched_media = db::Media::get_by_id(db, &item_id)
+            .await
+            .ok()
+            .flatten();
+        let item_kind = fetched_media
+            .as_ref()
+            .map(|m| {
+                m.kind
+                    .clone()
+            });
 
         let ps = PlaybackSession {
             play_session_id: play_session_id.clone(),
@@ -183,10 +194,14 @@ impl PlaybackSessionManager {
         if let Some(media) = fetched_media {
             crate::trakt::scrobble::spawn(
                 db.clone(),
-                self.trakt_base_url.clone(),
-                auth_session.user.id,
+                self.trakt_base_url
+                    .clone(),
+                auth_session
+                    .user
+                    .id,
                 media,
-                data.position_ticks.unwrap_or(0),
+                data.position_ticks
+                    .unwrap_or(0),
                 crate::trakt::scrobble::ScrobbleAction::Start,
             );
         }
@@ -430,7 +445,8 @@ impl PlaybackSessionManager {
                 };
                 crate::trakt::scrobble::spawn(
                     db.clone(),
-                    self.trakt_base_url.clone(),
+                    self.trakt_base_url
+                        .clone(),
                     user.id,
                     media,
                     position_ticks,
@@ -486,7 +502,8 @@ impl PlaybackSessionManager {
 
                 crate::trakt::scrobble::spawn(
                     db.clone(),
-                    self.trakt_base_url.clone(),
+                    self.trakt_base_url
+                        .clone(),
                     user.id,
                     media,
                     final_ticks.unwrap_or(0),

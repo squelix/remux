@@ -1715,8 +1715,14 @@ mod tests {
     #[test]
     fn server_configuration_default_has_no_trakt_credentials() {
         let cfg = ServerConfiguration::default();
-        assert!(cfg.trakt_client_id.is_none());
-        assert!(cfg.trakt_client_secret.is_none());
+        assert!(
+            cfg.trakt_client_id
+                .is_none()
+        );
+        assert!(
+            cfg.trakt_client_secret
+                .is_none()
+        );
     }
 
     #[test]
@@ -1727,8 +1733,18 @@ mod tests {
 
         let json = serde_json::to_string(&cfg).unwrap();
         let parsed: ServerConfiguration = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.trakt_client_id.as_deref(), Some("client-id"));
-        assert_eq!(parsed.trakt_client_secret.as_deref(), Some("client-secret"));
+        assert_eq!(
+            parsed
+                .trakt_client_id
+                .as_deref(),
+            Some("client-id")
+        );
+        assert_eq!(
+            parsed
+                .trakt_client_secret
+                .as_deref(),
+            Some("client-secret")
+        );
     }
 }
 

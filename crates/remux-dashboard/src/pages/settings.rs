@@ -1754,7 +1754,10 @@ pub fn TraktSettingsCard(app_state: AppState) -> Element {
                     );
                     base_cfg.set(Some(cfg));
                 }
-                Err(e) => save_error.set(Some(format!("Failed to load settings: {}", e.user_message()))),
+                Err(e) => save_error.set(Some(format!(
+                    "Failed to load settings: {}",
+                    e.user_message()
+                ))),
             }
             loading.set(false);
         });
@@ -1777,7 +1780,11 @@ pub fn TraktSettingsCard(app_state: AppState) -> Element {
             .clone()
             .unwrap_or_default();
         cfg.trakt_client_id = if id.is_empty() { None } else { Some(id) };
-        cfg.trakt_client_secret = if secret.is_empty() { None } else { Some(secret) };
+        cfg.trakt_client_secret = if secret.is_empty() {
+            None
+        } else {
+            Some(secret)
+        };
 
         saving.set(true);
         save_error.set(None);

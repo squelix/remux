@@ -9,7 +9,10 @@ pub enum ScrobbleAction {
     Stop,
 }
 
-pub fn progress_percent(position_ticks: i64, runtime_seconds: Option<i64>) -> Option<f64> {
+pub fn progress_percent(
+    position_ticks: i64,
+    runtime_seconds: Option<i64>,
+) -> Option<f64> {
     let runtime = runtime_seconds.filter(|r| *r > 0)?;
     let position_seconds = position_ticks / 10_000_000;
     Some((position_seconds as f64 / runtime as f64 * 100.0).clamp(0.0, 100.0))
@@ -26,9 +29,17 @@ pub fn scrobble_target(media: &db::Media) -> Option<sdks::trakt::ScrobbleTarget>
                     .imdb
                     .as_ref()
                     .map(|s| s.to_string()),
-                tmdb: media.external_ids.tmdb,
+                tmdb: media
+                    .external_ids
+                    .tmdb,
             };
-            if ids.imdb.is_none() && ids.tmdb.is_none() {
+            if ids
+                .imdb
+                .is_none()
+                && ids
+                    .tmdb
+                    .is_none()
+            {
                 return None;
             }
             Some(ScrobbleTarget::Movie { ids })
@@ -40,9 +51,17 @@ pub fn scrobble_target(media: &db::Media) -> Option<sdks::trakt::ScrobbleTarget>
                     .series_imdb
                     .as_ref()
                     .map(|s| s.to_string()),
-                tmdb: media.external_ids.series_tmdb,
+                tmdb: media
+                    .external_ids
+                    .series_tmdb,
             };
-            if show_ids.imdb.is_none() && show_ids.tmdb.is_none() {
+            if show_ids
+                .imdb
+                .is_none()
+                && show_ids
+                    .tmdb
+                    .is_none()
+            {
                 return None;
             }
             let (Some(season), Some(number)) = (media.parent_idx, media.idx) else {
@@ -67,7 +86,16 @@ pub fn spawn(
     action: ScrobbleAction,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = scrobble(&db, &trakt_base_url, user_id, &media, position_ticks, action).await {
+        if let Err(e) = scrobble(
+            &db,
+            &trakt_base_url,
+            user_id,
+            &media,
+            position_ticks,
+            action,
+        )
+        .await
+        {
             tracing::warn!(%user_id, media_id = %media.id, ?action, "trakt scrobble failed: {e:#}");
         }
     });
@@ -91,7 +119,8 @@ async fn scrobble(
         return Ok(());
     };
     let cfg = db::Settings::get_config(db).await?;
-    let (Some(client_id), Some(client_secret)) = (cfg.trakt_client_id, cfg.trakt_client_secret)
+    let (Some(client_id), Some(client_secret)) =
+        (cfg.trakt_client_id, cfg.trakt_client_secret)
     else {
         return Ok(());
     };
@@ -141,27 +170,22 @@ async fn execute_scrobble(
     target: sdks::trakt::ScrobbleTarget,
     progress: f64,
 ) -> Result<(), sdks::ClientError> {
-    let client = sdks::trakt::trakt_user_client(client_id, access_token, trakt_base_url)
-        .map_err(sdks::ClientError::Url)?;
+    let client =
+        sdks::trakt::trakt_user_client(client_id, access_token, trakt_base_url)
+            .map_err(sdks::ClientError::Url)?;
     let result = match action {
-        ScrobbleAction::Start => {
-            client
-                .execute(sdks::trakt::ScrobbleStartEndpoint { target, progress })
-                .await
-                .map(|_| ())
-        }
-        ScrobbleAction::Pause => {
-            client
-                .execute(sdks::trakt::ScrobblePauseEndpoint { target, progress })
-                .await
-                .map(|_| ())
-        }
-        ScrobbleAction::Stop => {
-            client
-                .execute(sdks::trakt::ScrobbleStopEndpoint { target, progress })
-                .await
-                .map(|_| ())
-        }
+        ScrobbleAction::Start => client
+            .execute(sdks::trakt::ScrobbleStartEndpoint { target, progress })
+            .await
+            .map(|_| ()),
+        ScrobbleAction::Pause => client
+            .execute(sdks::trakt::ScrobblePauseEndpoint { target, progress })
+            .await
+            .map(|_| ()),
+        ScrobbleAction::Stop => client
+            .execute(sdks::trakt::ScrobbleStopEndpoint { target, progress })
+            .await
+            .map(|_| ()),
     };
     match result {
         // Trakt returns 409 when a scrobble is already in progress for this
@@ -180,7 +204,8 @@ async fn refresh_access_token(
     user_id: Uuid,
     refresh_token: &str,
 ) -> anyhow::Result<String> {
-    let client = sdks::RestClient::new(trakt_base_url)?.with_auth(sdks::trakt::TraktOAuthAuth);
+    let client =
+        sdks::RestClient::new(trakt_base_url)?.with_auth(sdks::trakt::TraktOAuthAuth);
     let resp = client
         .execute(sdks::trakt::RefreshTokenEndpoint {
             client_id: client_id.to_string(),
@@ -189,8 +214,14 @@ async fn refresh_access_token(
         })
         .await?;
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(resp.expires_in);
-    db::TraktToken::upsert(db, user_id, &resp.access_token, &resp.refresh_token, expires_at)
-        .await?;
+    db::TraktToken::upsert(
+        db,
+        user_id,
+        &resp.access_token,
+        &resp.refresh_token,
+        expires_at,
+    )
+    .await?;
     Ok(resp.access_token)
 }
 
@@ -201,10 +232,7 @@ mod tests {
     #[test]
     fn progress_percent_computes_from_ticks_and_runtime() {
         // 1800s position (18_000_000_000 ticks) out of a 3600s runtime = 50%.
-        assert_eq!(
-            progress_percent(18_000_000_000, Some(3600)),
-            Some(50.0)
-        );
+        assert_eq!(progress_percent(18_000_000_000, Some(3600)), Some(50.0));
     }
 
     #[test]
@@ -240,7 +268,8 @@ mod tests {
             parent_idx: season,
             idx: number,
             external_ids: db::ExternalIds {
-                series_imdb: series_imdb.map(|s| db::NonEmptyString::try_new(s.to_string()).unwrap()),
+                series_imdb: series_imdb
+                    .map(|s| db::NonEmptyString::try_new(s.to_string()).unwrap()),
                 ..Default::default()
             },
             ..Default::default()
@@ -252,7 +281,11 @@ mod tests {
         let media = movie_media(Some("tt123"), None);
         match scrobble_target(&media) {
             Some(sdks::trakt::ScrobbleTarget::Movie { ids }) => {
-                assert_eq!(ids.imdb.as_deref(), Some("tt123"));
+                assert_eq!(
+                    ids.imdb
+                        .as_deref(),
+                    Some("tt123")
+                );
             }
             other => panic!("expected Movie target, got {other:?}"),
         }
@@ -273,7 +306,12 @@ mod tests {
                 season,
                 number,
             }) => {
-                assert_eq!(show_ids.imdb.as_deref(), Some("tt999"));
+                assert_eq!(
+                    show_ids
+                        .imdb
+                        .as_deref(),
+                    Some("tt999")
+                );
                 assert_eq!(season, 2);
                 assert_eq!(number, 5);
             }

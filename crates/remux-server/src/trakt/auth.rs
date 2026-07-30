@@ -57,19 +57,22 @@ impl TraktAuthService {
             .filter(|k| !k.is_empty())
             .ok_or_else(|| anyhow::anyhow!("Trakt client_id is not configured"))?;
 
-        let client =
-            sdks::RestClient::new(trakt_base_url)?.with_auth(sdks::trakt::TraktOAuthAuth);
+        let client = sdks::RestClient::new(trakt_base_url)?
+            .with_auth(sdks::trakt::TraktOAuthAuth);
         let resp = client
             .execute(sdks::trakt::DeviceCodeEndpoint { client_id })
             .await?;
 
-        self.pending.insert(
-            user_id,
-            PendingDeviceAuth {
-                device_code: resp.device_code.clone(),
-                expires_at: Utc::now() + Duration::seconds(resp.expires_in),
-            },
-        );
+        self.pending
+            .insert(
+                user_id,
+                PendingDeviceAuth {
+                    device_code: resp
+                        .device_code
+                        .clone(),
+                    expires_at: Utc::now() + Duration::seconds(resp.expires_in),
+                },
+            );
         Ok(resp)
     }
 
@@ -79,11 +82,16 @@ impl TraktAuthService {
         trakt_base_url: &str,
         user_id: Uuid,
     ) -> anyhow::Result<PollStatus> {
-        let Some(pending) = self.pending.get(&user_id).map(|e| e.clone()) else {
+        let Some(pending) = self
+            .pending
+            .get(&user_id)
+            .map(|e| e.clone())
+        else {
             return Ok(PollStatus::Expired);
         };
         if Utc::now() > pending.expires_at {
-            self.pending.remove(&user_id);
+            self.pending
+                .remove(&user_id);
             return Ok(PollStatus::Expired);
         }
 
@@ -91,23 +99,27 @@ impl TraktAuthService {
         let (Some(client_id), Some(client_secret)) =
             (cfg.trakt_client_id, cfg.trakt_client_secret)
         else {
-            self.pending.remove(&user_id);
+            self.pending
+                .remove(&user_id);
             anyhow::bail!("Trakt client_id/client_secret is not configured");
         };
 
-        let client =
-            sdks::RestClient::new(trakt_base_url)?.with_auth(sdks::trakt::TraktOAuthAuth);
+        let client = sdks::RestClient::new(trakt_base_url)?
+            .with_auth(sdks::trakt::TraktOAuthAuth);
         let result = client
             .execute(sdks::trakt::DeviceTokenEndpoint {
                 client_id,
                 client_secret,
-                device_code: pending.device_code.clone(),
+                device_code: pending
+                    .device_code
+                    .clone(),
             })
             .await;
 
         match result {
             Ok(tokens) => {
-                self.pending.remove(&user_id);
+                self.pending
+                    .remove(&user_id);
                 let expires_at = Utc::now() + Duration::seconds(tokens.expires_in);
                 db::TraktToken::upsert(
                     db,
@@ -121,7 +133,8 @@ impl TraktAuthService {
             }
             Err(e) => match classify_poll_error(&e) {
                 Some(status @ (PollStatus::Expired | PollStatus::Denied)) => {
-                    self.pending.remove(&user_id);
+                    self.pending
+                        .remove(&user_id);
                     Ok(status)
                 }
                 Some(status) => Ok(status),
@@ -131,7 +144,8 @@ impl TraktAuthService {
     }
 
     pub fn cancel(&self, user_id: Uuid) {
-        self.pending.remove(&user_id);
+        self.pending
+            .remove(&user_id);
     }
 }
 
@@ -141,7 +155,9 @@ mod tests {
 
     #[test]
     fn rate_limited_is_pending() {
-        let err = sdks::ClientError::RateLimited { retry_after_secs: 5 };
+        let err = sdks::ClientError::RateLimited {
+            retry_after_secs: 5,
+        };
         assert_eq!(classify_poll_error(&err), Some(PollStatus::Pending));
     }
 

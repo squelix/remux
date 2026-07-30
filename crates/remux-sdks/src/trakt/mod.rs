@@ -222,7 +222,10 @@ impl Endpoint for ScrobbleStartEndpoint {
         Method::POST
     }
     fn body(&self) -> Body {
-        Body::Json(self.target.to_body(self.progress))
+        Body::Json(
+            self.target
+                .to_body(self.progress),
+        )
     }
 }
 
@@ -241,7 +244,10 @@ impl Endpoint for ScrobblePauseEndpoint {
         Method::POST
     }
     fn body(&self) -> Body {
-        Body::Json(self.target.to_body(self.progress))
+        Body::Json(
+            self.target
+                .to_body(self.progress),
+        )
     }
 }
 
@@ -260,7 +266,10 @@ impl Endpoint for ScrobbleStopEndpoint {
         Method::POST
     }
     fn body(&self) -> Body {
-        Body::Json(self.target.to_body(self.progress))
+        Body::Json(
+            self.target
+                .to_body(self.progress),
+        )
     }
 }
 
@@ -387,9 +396,24 @@ mod scrobble_tests {
             .build()
             .unwrap();
 
-        assert_eq!(req.headers().get("trakt-api-key").unwrap(), "cid");
-        assert_eq!(req.headers().get("trakt-api-version").unwrap(), "2");
-        assert_eq!(req.headers().get("authorization").unwrap(), "Bearer tok");
+        assert_eq!(
+            req.headers()
+                .get("trakt-api-key")
+                .unwrap(),
+            "cid"
+        );
+        assert_eq!(
+            req.headers()
+                .get("trakt-api-version")
+                .unwrap(),
+            "2"
+        );
+        assert_eq!(
+            req.headers()
+                .get("authorization")
+                .unwrap(),
+            "Bearer tok"
+        );
     }
 
     #[test]
@@ -401,10 +425,28 @@ mod scrobble_tests {
             .build()
             .unwrap();
 
-        assert_eq!(req.headers().get("trakt-api-version").unwrap(), "2");
-        assert_eq!(req.headers().get("accept").unwrap(), "application/json");
-        assert!(req.headers().get("user-agent").is_some());
-        assert!(req.headers().get("trakt-api-key").is_none());
+        assert_eq!(
+            req.headers()
+                .get("trakt-api-version")
+                .unwrap(),
+            "2"
+        );
+        assert_eq!(
+            req.headers()
+                .get("accept")
+                .unwrap(),
+            "application/json"
+        );
+        assert!(
+            req.headers()
+                .get("user-agent")
+                .is_some()
+        );
+        assert!(
+            req.headers()
+                .get("trakt-api-key")
+                .is_none()
+        );
     }
 
     #[test]
@@ -463,7 +505,10 @@ mod scrobble_tests {
     fn scrobble_pause_uses_pause_path() {
         let ep = ScrobblePauseEndpoint {
             target: ScrobbleTarget::Movie {
-                ids: TraktIdsRef { imdb: None, tmdb: Some(42) },
+                ids: TraktIdsRef {
+                    imdb: None,
+                    tmdb: Some(42),
+                },
             },
             progress: 10.0,
         };

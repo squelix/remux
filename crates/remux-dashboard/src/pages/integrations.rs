@@ -3,7 +3,9 @@ use crate::{
     state::AppState,
 };
 use dioxus::prelude::*;
-use remux_sdks::remux::{DisconnectTraktAuth, GetTraktAuthStatus, PollTraktAuth, StartTraktAuth};
+use remux_sdks::remux::{
+    DisconnectTraktAuth, GetTraktAuthStatus, PollTraktAuth, StartTraktAuth,
+};
 
 #[derive(Clone, PartialEq)]
 enum TraktConnectionState {
@@ -32,13 +34,16 @@ pub fn TraktAccountCard(app_state: AppState) -> Element {
                 .execute(GetTraktAuthStatus)
                 .await
             {
-                Ok(resp) if resp.connected => state.set(TraktConnectionState::Connected),
+                Ok(resp) if resp.connected => {
+                    state.set(TraktConnectionState::Connected)
+                }
                 Ok(_) => state.set(TraktConnectionState::NotConnected),
                 Err(e) => {
                     let msg = e.user_message();
                     if msg.contains("client_id is not configured") {
                         state.set(TraktConnectionState::Error(
-                            "Trakt is not configured by the server administrator.".to_string(),
+                            "Trakt is not configured by the server administrator."
+                                .to_string(),
                         ));
                     } else {
                         state.set(TraktConnectionState::NotConnected);
@@ -63,12 +68,22 @@ pub fn TraktAccountCard(app_state: AppState) -> Element {
                         let _ = win.open_with_url(&resp.verification_url);
                     }
                     state.set(TraktConnectionState::Connecting {
-                        user_code: resp.user_code.clone(),
-                        verification_url: resp.verification_url.clone(),
+                        user_code: resp
+                            .user_code
+                            .clone(),
+                        verification_url: resp
+                            .verification_url
+                            .clone(),
                     });
 
-                    let interval_secs = resp.interval.max(1) as u64;
-                    let max_attempts = (resp.expires_in.max(1) as u64 / interval_secs) + 1;
+                    let interval_secs = resp
+                        .interval
+                        .max(1) as u64;
+                    let max_attempts = (resp
+                        .expires_in
+                        .max(1) as u64
+                        / interval_secs)
+                        + 1;
                     let poll_client = client.clone();
                     spawn(async move {
                         for _ in 0..max_attempts {
@@ -80,14 +95,18 @@ pub fn TraktAccountCard(app_state: AppState) -> Element {
                                 .execute(PollTraktAuth)
                                 .await
                             {
-                                Ok(poll_resp) => match poll_resp.status.as_str() {
+                                Ok(poll_resp) => match poll_resp
+                                    .status
+                                    .as_str()
+                                {
                                     "authorized" => {
                                         state.set(TraktConnectionState::Connected);
                                         return;
                                     }
                                     "expired" | "denied" => {
                                         state.set(TraktConnectionState::Error(
-                                            "Code expired or denied — try again.".to_string(),
+                                            "Code expired or denied — try again."
+                                                .to_string(),
                                         ));
                                         return;
                                     }

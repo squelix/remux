@@ -247,7 +247,9 @@ pub async fn init_app(
         );
     }
 
-    let trakt_base_url = config.trakt_base_url.clone();
+    let trakt_base_url = config
+        .trakt_base_url
+        .clone();
     let addons = addons::AddonService::from_db(&conn, &config).await?;
     let ctx = AppContext {
         config,
