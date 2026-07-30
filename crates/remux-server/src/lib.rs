@@ -262,6 +262,7 @@ pub async fn init_app(
         )),
         web_paths,
         addons,
+        trakt_auth: trakt::TraktAuthService::new(),
         started_at: Utc::now(),
     };
 
@@ -349,6 +350,7 @@ pub struct AppContext {
     /// Present in filesystem builds; `None` in desktop (assets are embedded).
     pub web_paths: Option<FilesystemPaths>,
     pub addons: addons::AddonService,
+    pub trakt_auth: trakt::TraktAuthService,
     /// When this server process started.
     pub started_at: chrono::DateTime<chrono::Utc>,
 }
