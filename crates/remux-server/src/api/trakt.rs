@@ -1,18 +1,11 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use remux_macros::{delete, get, post};
-use serde::Serialize;
 
-use crate::{AppState, ResultExt, db, db::auth, sdks, trakt::PollStatus};
+use crate::{AppState, ResultExt, db, db::auth, sdks, trakt::PollStatus, result_ext::IntoApiError};
 use axum_anyhow::ApiResult as Result;
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct TraktAuthStartResponse {
-    pub user_code: String,
-    pub verification_url: String,
-    pub interval: i64,
-    pub expires_in: i64,
-}
+use remux_sdks::remux::{
+    TraktAuthPollResponse, TraktAuthStartResponse, TraktAuthStatusResponse,
+};
 
 #[post("/remux/trakt/auth/start")]
 pub async fn start_trakt_auth(
@@ -28,7 +21,10 @@ pub async fn start_trakt_auth(
             session.user.id,
         )
         .await
-        .context_internal("failed to start Trakt device authorization")?;
+        .map_err(|e| {
+            let detail = e.to_string();
+            e.context_internal(&detail)
+        })?;
 
     Ok(Json(TraktAuthStartResponse {
         user_code: resp.user_code,
@@ -36,12 +32,6 @@ pub async fn start_trakt_auth(
         interval: resp.interval,
         expires_in: resp.expires_in,
     }))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct TraktAuthPollResponse {
-    pub status: String,
 }
 
 #[post("/remux/trakt/auth/poll")]
@@ -58,7 +48,10 @@ pub async fn poll_trakt_auth(
             session.user.id,
         )
         .await
-        .context_internal("failed to poll Trakt device authorization")?;
+        .map_err(|e| {
+            let detail = e.to_string();
+            e.context_internal(&detail)
+        })?;
 
     let status = match status {
         PollStatus::Pending => "pending",
@@ -70,12 +63,6 @@ pub async fn poll_trakt_auth(
     Ok(Json(TraktAuthPollResponse {
         status: status.to_string(),
     }))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct TraktAuthStatusResponse {
-    pub connected: bool,
 }
 
 #[get("/remux/trakt/auth/status")]

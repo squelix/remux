@@ -4871,6 +4871,76 @@ impl Endpoint for UpdateSystemConfiguration {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TraktAuthStartResponse {
+    pub user_code: String,
+    pub verification_url: String,
+    pub interval: i64,
+    pub expires_in: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StartTraktAuth;
+
+impl Endpoint for StartTraktAuth {
+    type Output = TraktAuthStartResponse;
+    fn path(&self) -> String {
+        "/remux/trakt/auth/start".into()
+    }
+    fn method(&self) -> Method {
+        Method::POST
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TraktAuthPollResponse {
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PollTraktAuth;
+
+impl Endpoint for PollTraktAuth {
+    type Output = TraktAuthPollResponse;
+    fn path(&self) -> String {
+        "/remux/trakt/auth/poll".into()
+    }
+    fn method(&self) -> Method {
+        Method::POST
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TraktAuthStatusResponse {
+    pub connected: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GetTraktAuthStatus;
+
+impl Endpoint for GetTraktAuthStatus {
+    type Output = TraktAuthStatusResponse;
+    fn path(&self) -> String {
+        "/remux/trakt/auth/status".into()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DisconnectTraktAuth;
+
+impl Endpoint for DisconnectTraktAuth {
+    type Output = ();
+    fn path(&self) -> String {
+        "/remux/trakt/auth".into()
+    }
+    fn method(&self) -> Method {
+        Method::DELETE
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GetEncodingConfiguration;
 
