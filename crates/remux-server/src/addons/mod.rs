@@ -2525,13 +2525,19 @@ impl AddonService {
                 let id_prefixes = r
                     .resource_id_prefixes(&ResourceType::Stream)
                     .map(|p| p.to_vec());
-                match r
+                let fetch = r
                     .stream
                     .as_ref()
                     .unwrap()
-                    .get_streams(media, ctx, id_prefixes.as_deref())
-                    .await
-                {
+                    .get_streams(media, ctx, id_prefixes.as_deref());
+                let outcome = match tokio::time::timeout(STREAM_ADDON_TIMEOUT, fetch).await {
+                    Ok(outcome) => outcome,
+                    Err(_) => {
+                        warn!(addon = %name, elapsed = ?t.elapsed(), "stream addon timed out");
+                        return vec![];
+                    }
+                };
+                match outcome {
                     Ok(mut streams) => {
                         let elapsed = t.elapsed();
                         if streams.is_empty() {
@@ -2753,6 +2759,14 @@ fn match_probe_version<'a>(
         })
 }
 
+/// Per-addon ceiling for the stream fan-out. Erroring addons are already
+/// swallowed in `get_streams`, but a hanging one is not an error: it would hold
+/// the whole HTTP response, because `GET /items/{id}` awaits `refresh_streams`
+/// inline and the shared SDK client (`remux-sdks`) has no timeout of its own.
+/// Mirrors the 10s bound already applied to the remuxdb probe below, and the 8s
+/// client timeouts in `torznab.rs` / `squid.rs`.
+const STREAM_ADDON_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 impl AddonService {
     #[tracing::instrument(skip_all, fields(title = %media.title, kind = %media.kind))]
     pub async fn refresh_streams(
@@ -2907,10 +2921,10 @@ impl AddonService {
                 .collect()
         };
         info!(streams = deduped.len(), ?sources, elapsed = ?instant.elapsed(), "streams synced");
-        if deduped.is_empty() {
-            return Ok(());
-        }
-
+        // Stamp the TTL even on an empty result. Otherwise an item no addon can
+        // serve never gets a timestamp, so the 60s fast path at the top of this
+        // function never engages and every request re-runs the whole fan-out —
+        // which `GET /items/{id}` awaits inline.
         let now = chrono::Utc::now().naive_utc();
         sqlx::query("UPDATE media SET streams_refreshed_at = ? WHERE id = ?")
             .bind(now)
@@ -2918,6 +2932,10 @@ impl AddonService {
             .execute(&ctx.db)
             .await?;
         media.streams_refreshed_at = Some(now);
+
+        if deduped.is_empty() {
+            return Ok(());
+        }
         let mut sources: Vec<db::Media> = deduped
             .into_iter()
             .enumerate()
@@ -3567,6 +3585,219 @@ mod tests {
                 "episode".to_string()
             )),
             Some(sdks::remux::MediaKind::Episode)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Stream fan-out: TTL stamping and per-addon bounding
+    // -----------------------------------------------------------------------
+
+    /// Installs `addon` as an extra stream-capable runtime. Mirrors
+    /// `integration_test::register_media_tracker`: the real runtime list is
+    /// built from registered presets, which have no way to carry a stub.
+    async fn register_stream_addon(
+        ctx: &AppContext,
+        name: &str,
+        addon: Arc<dyn StreamAddon>,
+    ) -> Addon {
+        let now = chrono::Utc::now().naive_utc();
+        let row = Addon {
+            id: crate::common::get_uuid(),
+            name: name.into(),
+            preset: AddonPresetRef {
+                kind: "scripted".into(),
+                config: serde_json::Value::Null.into(),
+            },
+            resources: vec![ResourceType::Stream],
+            types: vec![],
+            enabled: true,
+            priority: 0,
+            created_at: now,
+            updated_at: now,
+            system: false,
+            is_default: true,
+            http_redirect_stream: false,
+            service_filter: vec![],
+        };
+        row.insert(&ctx.db)
+            .await
+            .unwrap();
+
+        let mut runtimes = ctx
+            .addons
+            .list_for_user(&ctx.db, None)
+            .await;
+        runtimes.push(AddonRuntime {
+            row: row.clone(),
+            caps: AddonCapabilities {
+                stream: Some(addon),
+                ..Default::default()
+            },
+        });
+        ctx.addons
+            .replace_runtimes_for_test(runtimes);
+        row
+    }
+
+    /// Serves no streams, counting how many times it was asked.
+    struct CountingEmptyAddon(Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait]
+    impl StreamAddon for CountingEmptyAddon {
+        fn supports(&self, _media: &db::Media) -> bool {
+            true
+        }
+
+        async fn get_streams(
+            &self,
+            _media: &db::Media,
+            _ctx: &AppContext,
+            _id_prefixes: Option<&[String]>,
+        ) -> Result<Vec<crate::stream::StreamInfo>> {
+            self.0
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![])
+        }
+    }
+
+    /// An item no addon can serve must still get its TTL stamp. Without it the
+    /// 60s fast path never engages for that item, so every single request
+    /// re-runs the whole addon fan-out — and `GET /items/{id}` awaits that
+    /// fan-out inline.
+    #[tokio::test]
+    async fn refresh_streams_stamps_ttl_when_no_streams_found() {
+        use std::sync::atomic::Ordering;
+
+        let (_server, guard, _token) =
+            crate::integration_test::authenticated_server().await;
+        let ctx = &guard.0;
+        let mut media = crate::integration_test::seed_movie(ctx).await;
+
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        register_stream_addon(
+            ctx,
+            "empty",
+            Arc::new(CountingEmptyAddon(calls.clone())),
+        )
+        .await;
+
+        ctx.addons
+            .refresh_streams(&mut media, ctx, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the first call must fan out to the addon"
+        );
+
+        // The stamp has to be persisted, not just held in the in-memory struct:
+        // the next request loads a fresh `db::Media`.
+        let stamped: Option<chrono::NaiveDateTime> =
+            sqlx::query_scalar("SELECT streams_refreshed_at FROM media WHERE id = ?")
+                .bind(media.id)
+                .fetch_one(&ctx.db)
+                .await
+                .unwrap();
+        assert!(
+            stamped.is_some(),
+            "an empty result must still persist streams_refreshed_at"
+        );
+
+        ctx.addons
+            .refresh_streams(&mut media, ctx, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the second call must be short-circuited by the TTL, not fan out again"
+        );
+    }
+
+    /// Never returns. Stands in for an addon whose host is unreachable in a way
+    /// that hangs instead of erroring — a `reqwest::Client` with no timeout, as
+    /// the shared SDK client is.
+    struct HangingAddon;
+
+    #[async_trait]
+    impl StreamAddon for HangingAddon {
+        fn supports(&self, _media: &db::Media) -> bool {
+            true
+        }
+
+        async fn get_streams(
+            &self,
+            _media: &db::Media,
+            _ctx: &AppContext,
+            _id_prefixes: Option<&[String]>,
+        ) -> Result<Vec<crate::stream::StreamInfo>> {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            unreachable!("the per-addon timeout must fire long before this");
+        }
+    }
+
+    /// Answers immediately with one stream.
+    struct InstantAddon;
+
+    #[async_trait]
+    impl StreamAddon for InstantAddon {
+        fn supports(&self, _media: &db::Media) -> bool {
+            true
+        }
+
+        async fn get_streams(
+            &self,
+            _media: &db::Media,
+            _ctx: &AppContext,
+            _id_prefixes: Option<&[String]>,
+        ) -> Result<Vec<crate::stream::StreamInfo>> {
+            Ok(vec![crate::stream::StreamInfo {
+                descriptor: crate::stream::StreamDescriptor::Http {
+                    url: "http://example.invalid/fast.mkv".into(),
+                    request_headers: Default::default(),
+                    response_headers: Default::default(),
+                },
+                filename: Some("fast.mkv".into()),
+                ..Default::default()
+            }])
+        }
+    }
+
+    /// A hanging stream addon must not hold the whole fan-out. `join_all` already
+    /// swallows per-addon *errors*, but a hang is not an error — without a bound
+    /// the slowest addon dictates the HTTP response time, and there is no bound
+    /// anywhere below this point (the shared SDK client has no timeout either).
+    ///
+    /// Runs in real time — tokio's `test-util` clock is not enabled in this
+    /// crate — so it costs one `STREAM_ADDON_TIMEOUT`. Worth it: the failure
+    /// mode it guards against is an unbounded hang.
+    #[tokio::test]
+    async fn get_streams_drops_addons_that_exceed_the_timeout() {
+        let (_server, guard, _token) =
+            crate::integration_test::authenticated_server().await;
+        let ctx = &guard.0;
+        let media = crate::integration_test::seed_movie(ctx).await;
+
+        register_stream_addon(ctx, "hanging", Arc::new(HangingAddon)).await;
+        register_stream_addon(ctx, "instant", Arc::new(InstantAddon)).await;
+
+        let started = std::time::Instant::now();
+        let streams = ctx
+            .addons
+            .get_streams(&media, ctx, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            streams.len(),
+            1,
+            "the instant addon's stream must survive the hanging one"
+        );
+        assert!(
+            started.elapsed() < STREAM_ADDON_TIMEOUT * 2,
+            "the fan-out must be bounded by the per-addon timeout, took {:?}",
+            started.elapsed(),
         );
     }
 }
